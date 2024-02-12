@@ -1,0 +1,281 @@
+#include<LiquidCrystal.h>
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+
+byte seconds = 0;
+byte minutes = 0;
+byte hours = 0;
+
+#define buttonPin 13
+#define pumpPin 9  
+#define redPin 7
+#define greenPin 6
+#define photoResistor A0
+#define moistPin A1
+#define pressurePin A2
+
+#define maxHappyLight 300 // edit values to fit your plant
+#define minHappyLight 800
+#define maxLightLevel 1000
+#define minLightLevel 500
+
+#define moistLimitHigh 500 // edit values to fit your plant
+#define moistLimitLow 200
+
+#define minPressureToPump 998 //edit to correct pressuer amount needed
+
+int pressureReading;
+int buttonPushCounter = 0;
+int numOfTimesWatered = 0;
+int currentLightLevels;
+long timeToCheck = 2000; //change 259200000 to 72hours to water every 3 days // edit to how often you want to check on your plants
+long pumpTime = 1500; // edit to how long the pump should pump water for
+long timeOfLastPumpActivation = 0;
+long startPumpTime = 0;
+unsigned long currentTime;
+unsigned long timeSinceLastWaterCheck = 0;
+float currentMoisture;
+
+boolean buttonState = LOW;
+boolean lastButtonState = LOW;
+boolean enoughWaterToPump = false;
+boolean plantNeedsWater = false;
+boolean isPumpTurnedOn = false;
+
+
+void setup()
+{
+  Serial.begin(9600);
+  lcd.begin(16, 2); 
+  pinMode(redPin, OUTPUT);
+  pinMode(greenPin, OUTPUT);
+  pinMode(pumpPin, OUTPUT);
+  pinMode(moistPin, INPUT);
+  pinMode(photoResistor, INPUT);
+  pinMode(buttonPin, OUTPUT);
+}
+
+void(* resetFunc) (void) = 0; // Reset function
+
+void loop()
+{ 
+  //Serial.println(millis() - startPumpTime);
+ /* Serial.print("moisture level : ");
+  Serial.println(currentMoisture);*/
+
+ Serial.print("PRESSURE READING         : ");
+  Serial.println(pressureReading);
+
+  /*Serial.print("isPumpTurnedOn: ");
+  Serial.println(isPumpTurnedOn);
+
+  Serial.print("millis() - startPumpTime");
+  Serial.print(millis() - startPumpTime);*/
+
+  /*Serial.print("buttonState: ");
+  Serial.println(buttonState);
+  
+  /*Serial.print("plantNeedsWater: ");
+  Serial.println(plantNeedsWater);
+  
+  Serial.print("enoughWaterToPump: ");
+  Serial.println(enoughWaterToPump);*/
+    
+  
+  UpdateTimeVars();
+  PressButtonToPrintInfo();
+  CheckIfEnoughWaterToPump();
+    
+  if(millis() - timeSinceLastWaterCheck > timeToCheck) // This allows us to evaluate how much time has passed since the last water check
+  {
+    WateringPlantPumpOn();
+    timeSinceLastWaterCheck = millis();
+    LightLevelsCheckAndGiveInfo();
+  }
+  
+  if(hours == 168) // 168 equals 1 week
+  {
+    resetFunc();
+  }
+  delay(250);
+}
+
+void UpdateTimeVars()
+{
+  int totalSeconds = millis() / 1000;
+  hours = totalSeconds / 3600;
+    totalSeconds = totalSeconds % 3600;
+    minutes = totalSeconds / 60;
+    seconds = totalSeconds %60;
+}
+
+void PressButtonToPrintInfo() 
+{
+  buttonState = digitalRead(buttonPin);
+  
+  if(buttonState != lastButtonState)
+  {
+    if(buttonState == HIGH)
+    {
+      lcd.clear();
+      buttonPushCounter++;
+        if(buttonPushCounter > 3)
+      {
+       buttonPushCounter = 0; 
+      }
+       switch (buttonPushCounter)
+      {
+         case 0:
+         {
+           LightLevelsCheckAndGiveInfo();
+         }
+         break;
+         
+        case 1:
+         if(pressureReading < minPressureToPump)
+         {
+           lcd.setCursor(0,0);
+        lcd.print("Not Enough Water");
+           lcd.setCursor(4,1);
+        lcd.print("To Pump");
+         }
+         else
+         {
+           lcd.setCursor(1,0);
+        lcd.print("Enough Water");
+        lcd.setCursor(4,1);
+        lcd.print("To Pump");
+         }
+          break;
+         
+        case 2:
+         lcd.setCursor(1,0);
+         lcd.print("Soil Moisture: ");
+         lcd.setCursor(5,1);
+         lcd.print(String(currentMoisture));
+          break;
+         
+         case 3:
+        lcd.setCursor(0,0);
+        lcd.print("Plant watered " + String(numOfTimesWatered));
+         lcd.setCursor(0,1);
+         lcd.print("times this week");
+          break;
+      }
+    }
+    lastButtonState = buttonState;
+  } 
+}
+
+void CheckIfEnoughWaterToPump() 
+{
+  pressureReading = analogRead(pressurePin);
+  /*Serial.print("Pressure Pad Reading: ");
+  Serial.println(pressureReading);*/
+
+  if(pressureReading < minPressureToPump)
+  {
+    Serial.println(" - Not enough water");
+    enoughWaterToPump = false;
+  }
+  else 
+  {
+    Serial.println(" - Enough water");
+    enoughWaterToPump = true;
+  }
+}
+
+void SoilMoistureCheck()
+{
+    currentMoisture = analogRead(moistPin);
+
+   /* Serial.print("moisture level : ");
+  Serial.println(currentMoisture);*/
+  
+  if (currentMoisture < moistLimitLow)
+  {
+   plantNeedsWater = true; 
+   Serial.println("plantNeedsWater:");
+   Serial.println(plantNeedsWater);
+  }
+  else
+  {
+    plantNeedsWater = false;
+  }
+}
+
+void WateringPlantPumpOn()
+{
+  SoilMoistureCheck();
+  
+  if(!isPumpTurnedOn && plantNeedsWater && enoughWaterToPump)
+  {  
+    Serial.println("pump on");
+    digitalWrite(pumpPin, HIGH);
+    digitalWrite(greenPin, HIGH);
+    numOfTimesWatered++;
+    isPumpTurnedOn = true;
+    startPumpTime = millis();
+  }
+
+    if(isPumpTurnedOn && (millis() - startPumpTime > pumpTime))
+    {
+       Serial.println("pump off");
+      digitalWrite(pumpPin, LOW);
+      digitalWrite(greenPin,LOW);
+      isPumpTurnedOn = false;
+   }
+  
+  if(!enoughWaterToPump)
+  {
+    Serial.println("cannot pump");
+    digitalWrite(pumpPin, LOW);
+      digitalWrite(greenPin,LOW);
+      isPumpTurnedOn = false;
+  }
+  
+  }
+
+void LightLevelsCheckAndGiveInfo() 
+{
+  currentLightLevels = analogRead(photoResistor);
+  
+  /*Serial.print("light level sensor value : ");
+  Serial.println(currentLightLevels);*/
+  
+  if(currentLightLevels < minLightLevel)
+  {
+    lcd.clear();
+    lcd.setCursor(1,0);
+  lcd.print("Not enough sun");
+    lcd.setCursor(0,1);
+  lcd.print("Open the blinds!");
+    
+    digitalWrite(redPin, HIGH);
+    digitalWrite(greenPin, LOW);
+  }
+  
+  else if(currentLightLevels >= maxHappyLight && currentLightLevels <= minHappyLight)
+  {
+    lcd.clear();
+    lcd.setCursor(2,0);
+  lcd.print("Perfect sun!");
+    lcd.setCursor(2,1);
+  lcd.print("HAPPY PLANT!");
+    
+    digitalWrite(greenPin, HIGH);
+    digitalWrite(redPin, LOW);
+  
+  }
+  
+  else
+  {
+    lcd.clear();
+    lcd.setCursor(2,0);
+  lcd.print("Too bright");
+    lcd.setCursor(0,1);
+  lcd.print("Pull the blinds!");
+    
+   digitalWrite(redPin, HIGH);
+digitalWrite(greenPin, LOW);
+  } 
+ }
